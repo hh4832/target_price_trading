@@ -34,7 +34,7 @@ def sheet_values(sheets, sheet_id, tab):
 
 def find_child(drive, parent, name):
     safe = name.replace("'", "\\'")
-    result = drive.files().list(q=f"'{parent}' in parents and name = '{safe}' and trashed = false", fields="nextPageToken,files(id,name,mimeType)", page_size=100, supportsAllDrives=True, includeItemsFromAllDrives=True).execute()
+    result = drive.files().list(q=f"'{parent}' in parents and name = '{safe}' and trashed = false", fields="nextPageToken,files(id,name,mimeType)", pageSize=100, supportsAllDrives=True, includeItemsFromAllDrives=True).execute()
     matches = result["files"]
     if len(matches) > 1 or result.get("nextPageToken"):
         raise ValueError(f"Ambiguous Drive child {name}")
