@@ -5,20 +5,30 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pandas as pd
-from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
 from .config import FOLDER_NAME
 
 SCOPES = ["https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/spreadsheets.readonly"]
+TOKEN_URI = "https://oauth2.googleapis.com/token"
 
 
 def clients():
-    payload = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
-    if not payload:
-        raise RuntimeError("GOOGLE_SERVICE_ACCOUNT_JSON is required; share Sheet and folder with its client_email")
-    credentials = service_account.Credentials.from_service_account_info(json.loads(payload), scopes=SCOPES)
+    required = ("GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "GOOGLE_OAUTH_REFRESH_TOKEN")
+    values = {key: os.environ.get(key) for key in required}
+    missing = [key for key, value in values.items() if not value]
+    if missing:
+        raise RuntimeError(f"Missing Google OAuth credentials: {', '.join(missing)}")
+    credentials = Credentials(
+        token=None,
+        refresh_token=values["GOOGLE_OAUTH_REFRESH_TOKEN"],
+        token_uri=TOKEN_URI,
+        client_id=values["GOOGLE_OAUTH_CLIENT_ID"],
+        client_secret=values["GOOGLE_OAUTH_CLIENT_SECRET"],
+        scopes=SCOPES,
+    )
     return build("drive", "v3", credentials=credentials, cache_discovery=False), build("sheets", "v4", credentials=credentials, cache_discovery=False)
 
 

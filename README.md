@@ -9,7 +9,7 @@
 - 固定 Google Drive folder ID `13XG_Eqx1hGDeZwX9Awj7cTxT5E10dkhT`、名稱「基本面選股」，內含 Google Sheet ID `1VHB4WEwWt04eDWhOu8aM2bQLHCBUgEeoUrL3wUTuyew`。執行時重新驗證 folder ID、名稱與 MIME type；不猜測 Colab mount path。
 - 試算表分頁「基本面選股」由人手輸入，至少含 `Ticker`、`名稱`、`報告日期`、`本次目標價`、`投顧`；可含 `前次目標價`、`持有`、`買進日期`、`成本均價`。程式只讀，不更改、刪除或覆寫任何報告；額外欄位會保留在每次 `report_snapshot.csv`。同股票同投顧的新報告須新增一列，不要修改舊列。相同 ticker、broker、report_date 的兩列會報錯，請明確區分日期。
 - 可另建 `CorporateActions` 分頁，首列為 `ticker,effective_date,action_type,target_factor`。分股 1→2 填 `SPLIT,0.5`；反分股 2→1 填 `REVERSE_SPLIT,2`。其他價格尺度事件需人工驗證係數；股利填 `CASH_DIVIDEND,1`，不改目標價。缺少分頁可執行，但需自行核對資料是否存在尚未分類的小型事件；調整因子相鄰交易日跳動 >10% 而無分類紀錄會直接失敗。此偵測門檻只作資料品質警示，不能保證找出所有 corporate actions。
-- 先將 Drive folder 和試算表分享給 service account 的 `client_email`，GitHub Actions secret `GOOGLE_SERVICE_ACCOUNT_JSON` 填 service account JSON。該身分必須可編輯目標 folder、可讀試算表。初次啟用前先核對 folder 與 spreadsheet 的存取權限。
+- GitHub Actions 以擁有目標 My Drive 的 Google 使用者 OAuth 執行，使用三個 repository secrets：`GOOGLE_OAUTH_CLIENT_ID`、`GOOGLE_OAUTH_CLIENT_SECRET`、`GOOGLE_OAUTH_REFRESH_TOKEN`。refresh token 必須由同一 OAuth client 以 offline access 授權 Drive 與唯讀 Sheets scopes 取得；不得寫入程式、日誌或 commit。Service account 不用於 My Drive 輸出，因其本身沒有個人 Drive 儲存配額。
 - FinLab 無瀏覽器的 CI 使用 `FINLAB_REFRESH_TOKEN`、`FINLAB_SESSION_ID`、`FINLAB_API_KEY` 三個 GitHub Secrets。先在可信任的環境執行 `python -m finlab login`，再由 `python -m finlab token --env` 取得目前官方 headless 憑證；勿貼在日誌或 commit。Colab 可直接用瀏覽器 `finlab.login()`，或將三個值存於 Colab Secrets。不要用已棄用的 `finlab.login(api_token)`。
 
 ## 執行與資料流
