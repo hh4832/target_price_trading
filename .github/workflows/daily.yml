@@ -1,7 +1,7 @@
 name: Target price daily research
 on:
   schedule:
-    - cron: '0 0 * * 1-5' # 08:00 Asia/Taipei, UTC+8
+    - cron: '0 20 * * 0-4' # 04:00 Asia/Taipei (next calendar day), UTC+8
   workflow_dispatch:
 permissions:
   contents: read
