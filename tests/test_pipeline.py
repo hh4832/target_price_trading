@@ -10,6 +10,7 @@ from src.corporate_actions import effective_target, parse_actions
 from src.price_loader import market_dates
 from src.pipeline import run, validate_previous_state
 from src.report_loader import latest_reports, parse_reports
+from src.report_registry import REGISTRY_COLUMNS, update_report_registry
 from src.research_summary import summarize
 from src.returns import calculate_returns
 from src.screener import screen
@@ -129,17 +130,21 @@ class ResearchRules(unittest.TestCase):
         mock_check_output.side_effect = ["abc123\n", "main\n"]
         mock_archive.return_value = "20260103_080000_abc123"
         previous = screen(reports(), parse_actions([]), frame, "2026-01-02")
-        with patch("src.pipeline.put_file") as mock_put_file, patch("src.pipeline.read_csv", side_effect=[previous, pd.DataFrame(columns=LEDGER_COLUMNS)]), patch("src.pipeline.generate_signals") as mock_generate:
+        with patch("src.pipeline.put_file") as mock_put_file, patch("src.pipeline.read_csv", side_effect=[previous, pd.DataFrame(columns=LEDGER_COLUMNS), pd.DataFrame(columns=REGISTRY_COLUMNS)]), patch("src.pipeline.generate_signals", side_effect=lambda current, previous, ledger, *args: ledger) as mock_generate:
             result = run()
         self.assertEqual(result, "20260103_080000_abc123")
         frames = mock_archive.call_args.args[2]
-        self.assertEqual(set(frames), {"daily_screen.csv", "signal_ledger.csv", "signal_returns.csv", "research_summary.csv", "last_screen.csv", "report_snapshot.csv", "corporate_actions_snapshot.csv"})
-        self.assertFalse(mock_archive.call_args.kwargs["publish_state"])
+        self.assertEqual(set(frames), {"daily_screen.csv", "signal_ledger.csv", "signal_returns.csv", "research_summary.csv", "last_screen.csv", "report_snapshot.csv", "report_registry.csv", "corporate_actions_snapshot.csv"})
         self.assertIn("run_status=DATA_NOT_UPDATED", mock_archive.call_args.args[3])
         self.assertIn("state_updated=false", mock_archive.call_args.args[3])
         self.assertIn("new_signals=0", mock_archive.call_args.args[3])
-        mock_generate.assert_not_called()
-        mock_put_file.assert_not_called()
+        self.assertIn("new_reports=1", mock_archive.call_args.args[3])
+        self.assertIn("current_outputs_published=true", mock_archive.call_args.args[3])
+        mock_generate.assert_called_once()
+        mock_put_file.assert_called_once()
+        payload = json.loads(mock_put_file.call_args.args[3].decode())
+        self.assertEqual(payload["last_successful_market_date"], "2026-01-02")
+        self.assertEqual(payload["last_archive"], "20260103_080000_abc123")
 
     @patch("src.pipeline.archive")
     @patch("src.pipeline.subprocess.check_output")
@@ -158,13 +163,28 @@ class ResearchRules(unittest.TestCase):
         mock_check_output.side_effect = ["abc123\n", "main\n"]
         mock_archive.return_value = "20260102_080000_abc123"
         previous = screen(reports(), parse_actions([]), frame, "2026-01-01")
-        with patch("src.pipeline.put_file") as mock_put_file, patch("src.pipeline.read_csv", side_effect=[previous, pd.DataFrame(columns=LEDGER_COLUMNS)]):
+        with patch("src.pipeline.put_file") as mock_put_file, patch("src.pipeline.read_csv", side_effect=[previous, pd.DataFrame(columns=LEDGER_COLUMNS), pd.DataFrame(columns=REGISTRY_COLUMNS)]):
             run()
-        self.assertTrue(mock_archive.call_args.kwargs["publish_state"])
         self.assertIn("run_status=SUCCESS_NEW_DATA", mock_archive.call_args.args[3])
         self.assertIn("state_updated=true", mock_archive.call_args.args[3])
         payload = json.loads(mock_put_file.call_args.args[3].decode())
         self.assertEqual(payload["last_successful_market_date"], "2026-01-02")
+
+    def test_report_registry_preserves_first_seen_at(self):
+        initial = update_report_registry(self.reports, pd.DataFrame(columns=REGISTRY_COLUMNS), "2026-09-30T04:51:00+08:00")
+        self.assertEqual(len(initial), 1)
+        self.assertEqual(initial.iloc[0].first_seen_at, "2026-09-30T04:51:00+08:00")
+        rerun = update_report_registry(self.reports, initial, "2026-09-30T05:30:00+08:00")
+        self.assertEqual(len(rerun), 1)
+        self.assertEqual(rerun.iloc[0].first_seen_at, "2026-09-30T04:51:00+08:00")
+
+        added = self.reports.copy()
+        second = self.reports.copy()
+        second.loc[:, "report_date"] = pd.Timestamp("2026-09-29")
+        added = pd.concat([added, second], ignore_index=True)
+        updated = update_report_registry(added, rerun, "2026-09-30T06:00:00+08:00")
+        self.assertEqual(len(updated), 2)
+        self.assertEqual(updated.loc[updated.report_date == "2026-09-29", "first_seen_at"].iloc[0], "2026-09-30T06:00:00+08:00")
 
     def test_stale_calendar(self):
         frame = prices(["2026-01-01", "2026-01-02"], [100, 101])

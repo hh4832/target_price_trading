@@ -12,6 +12,7 @@ from .corporate_actions import parse_actions
 from .output import archive, clients, put_file, read_csv, read_state, sheet_values, verify_folder
 from .price_loader import load_finlab_prices, market_dates, price_at
 from .report_loader import parse_reports
+from .report_registry import REGISTRY_COLUMNS, update_report_registry
 from .research_summary import summarize
 from .returns import calculate_returns
 from .screener import SCREEN_COLUMNS, screen
@@ -86,14 +87,16 @@ def run():
     previous_screen_market_date = validate_previous_state(state, previous)
     ledger = read_csv(drive, cfg.folder_id, "signal_ledger.csv", LEDGER_COLUMNS)
     previous_ledger_rows = len(ledger)
+    registry_before = read_csv(drive, cfg.folder_id, "report_registry.csv", REGISTRY_COLUMNS)
+    registry = update_report_registry(reports, registry_before, now)
+    new_reports = len(registry) - len(registry_before)
 
-    if has_new_market_date:
-        ledger = generate_signals(current, previous, ledger, commit, now, cfg.threshold)
-        new_signals = len(ledger) - previous_ledger_rows
-        run_status = "SUCCESS_NEW_DATA"
-    else:
-        new_signals = 0
-        run_status = "DATA_NOT_UPDATED"
+    # Every successful execution is the current official result. Signal IDs make
+    # same-market-date reruns idempotent while allowing newly keyed reports to be
+    # incorporated without advancing the FinLab market-date state.
+    ledger = generate_signals(current, previous, ledger, commit, now, cfg.threshold)
+    new_signals = len(ledger) - previous_ledger_rows
+    run_status = "SUCCESS_NEW_DATA" if has_new_market_date else "DATA_NOT_UPDATED"
 
     returns = calculate_returns(ledger, raw_close, raw_open, adj_close)
     summary = summarize(returns)
@@ -102,8 +105,8 @@ def run():
         f"run_status={run_status}", f"latest_finlab_market_date={market_date.date()}",
         f"last_successful_market_date={last_state_date or ''}", f"processed_market_date={market_date.date()}",
         f"previous_screen_market_date={previous_screen_market_date or ''}", f"previous_screen_rows={len(previous)}",
-        f"previous_ledger_rows={previous_ledger_rows}", f"new_signals={new_signals}",
-        f"state_updated={'true' if has_new_market_date else 'false'}",
+        f"previous_ledger_rows={previous_ledger_rows}", f"new_signals={new_signals}", f"new_reports={new_reports}",
+        f"state_updated={'true' if has_new_market_date else 'false'}", "current_outputs_published=true",
         f"TARGET_UPSIDE_THRESHOLD={cfg.threshold}", f"REPORT_MAX_AGE_DAYS={cfg.max_age_days}",
         "price_source=FinLab raw price:收盤價; raw price:開盤價; adjusted etl:adj_close", "benchmark=0050",
         "data_validation=PASS; corporate action coverage heuristic >10% ratio jump plus manually classified events",
@@ -111,10 +114,11 @@ def run():
     ])
     frames = {"daily_screen.csv": current, "signal_ledger.csv": ledger, "signal_returns.csv": returns,
               "research_summary.csv": summary, "last_screen.csv": current, "report_snapshot.csv": reports,
-              "corporate_actions_snapshot.csv": actions}
-    name = archive(drive, cfg.folder_id, frames, info, commit, publish_state=has_new_market_date)
+              "report_registry.csv": registry, "corporate_actions_snapshot.csv": actions}
+    name = archive(drive, cfg.folder_id, frames, info, commit)
+    state_market_date = str(market_date.date()) if has_new_market_date else last_state_date
+    put_file(drive, cfg.folder_id, "state.json", json.dumps({"last_successful_market_date": state_market_date, "last_archive": name}).encode(), "application/json", replace=True)
     if has_new_market_date:
-        put_file(drive, cfg.folder_id, "state.json", json.dumps({"last_successful_market_date": str(market_date.date()), "last_archive": name}).encode(), "application/json", replace=True)
         print(f"SUCCESS: {name} market_date={market_date.date()} signals={len(ledger)}")
     else:
         print(f"DATA_NOT_UPDATED: {name} latest_available_market_date={market_date.date()}; last_successful_market_date={last_state_date}")
