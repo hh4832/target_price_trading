@@ -6,6 +6,7 @@ import pandas as pd
 
 from src.corporate_actions import effective_target, parse_actions
 from src.price_loader import market_dates
+from src.pipeline import validate_previous_state
 from src.report_loader import latest_reports, parse_reports
 from src.research_summary import summarize
 from src.returns import calculate_returns
@@ -93,6 +94,21 @@ class ResearchRules(unittest.TestCase):
         raw_open.at[dates[1], "2330"] = float("nan")
         with self.assertRaises(ValueError):
             calculate_returns(ledger, raw_close, raw_open, adjusted)
+
+    def test_state_integrity(self):
+        previous = pd.DataFrame({"market_date": ["2026-01-02", "2026-01-02"]})
+        state = {"last_successful_market_date": "2026-01-02"}
+        self.assertEqual(validate_previous_state(state, previous), date(2026, 1, 2))
+
+        with self.assertRaises(ValueError):
+            validate_previous_state({"last_successful_market_date": "2026-01-01"}, previous)
+        with self.assertRaises(ValueError):
+            validate_previous_state(state, pd.DataFrame({"market_date": ["2026-01-01", "2026-01-02"]}))
+        with self.assertRaises(ValueError):
+            validate_previous_state(state, pd.DataFrame(columns=["market_date"]))
+        with self.assertRaises(ValueError):
+            validate_previous_state({}, previous)
+        self.assertIsNone(validate_previous_state({}, pd.DataFrame(columns=["market_date"])))
 
     def test_stale_calendar(self):
         frame = prices(["2026-01-01", "2026-01-02"], [100, 101])

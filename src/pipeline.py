@@ -36,6 +36,27 @@ def check_action_coverage(reports, actions, raw_close, adj_close, market_date):
                 raise ValueError(f"Unclassified corporate action candidate {ticker} {date.date()}; add reviewed CorporateActions row")
 
 
+def validate_previous_state(state, previous):
+    state_date = state.get("last_successful_market_date")
+    if not state_date:
+        if not previous.empty:
+            raise ValueError("State integrity error: last_screen.csv exists but state.json has no last_successful_market_date")
+        return None
+    if previous.empty:
+        raise ValueError("State integrity error: state.json has last_successful_market_date but last_screen.csv is empty")
+    dates = pd.to_datetime(previous["market_date"], errors="coerce").dropna().dt.normalize().unique()
+    if len(dates) != 1:
+        raise ValueError(f"State integrity error: last_screen.csv must contain exactly one market_date; found {len(dates)}")
+    previous_date = pd.Timestamp(dates[0]).date()
+    expected_date = pd.Timestamp(state_date).date()
+    if previous_date != expected_date:
+        raise ValueError(
+            f"State integrity error: state last_successful_market_date={expected_date} "
+            f"but last_screen market_date={previous_date}"
+        )
+    return previous_date
+
+
 def run():
     cfg = Config()
     drive, sheets = clients()
@@ -58,14 +79,17 @@ def run():
     check_action_coverage(reports, actions, raw_close, adj_close, market_date)
     current = screen(reports, actions, raw_close, market_date, cfg.threshold, cfg.max_age_days)
     previous = read_csv(drive, cfg.folder_id, "last_screen.csv", SCREEN_COLUMNS)
+    previous_screen_market_date = validate_previous_state(state, previous)
     ledger = read_csv(drive, cfg.folder_id, "signal_ledger.csv", LEDGER_COLUMNS)
+    previous_ledger_rows = len(ledger)
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     branch = subprocess.check_output(["git", "branch", "--show-current"], text=True).strip() or os.environ.get("GITHUB_REF_NAME", "detached")
     now = datetime.now(ZoneInfo("Asia/Taipei")).isoformat()
     ledger = generate_signals(current, previous, ledger, commit, now, cfg.threshold)
+    new_signals = len(ledger) - previous_ledger_rows
     returns = calculate_returns(ledger, raw_close, raw_open, adj_close)
     summary = summarize(returns)
-    info = "\n".join([f"execution_timestamp={now}", "timezone=Asia/Taipei", f"git_commit={commit}", f"branch={branch}", f"latest_finlab_market_date={market_date.date()}", f"processed_market_date={market_date.date()}", f"TARGET_UPSIDE_THRESHOLD={cfg.threshold}", f"REPORT_MAX_AGE_DAYS={cfg.max_age_days}", "price_source=FinLab raw price:收盤價; raw price:開盤價; adjusted etl:adj_close", "benchmark=0050", "data_validation=PASS; corporate action coverage heuristic >10% ratio jump plus manually classified events", "research_conclusion=修改後再測", ""])
+    info = "\n".join([f"execution_timestamp={now}", "timezone=Asia/Taipei", f"git_commit={commit}", f"branch={branch}", f"latest_finlab_market_date={market_date.date()}", f"processed_market_date={market_date.date()}", f"previous_screen_market_date={previous_screen_market_date or ''}", f"previous_screen_rows={len(previous)}", f"previous_ledger_rows={previous_ledger_rows}", f"new_signals={new_signals}", f"TARGET_UPSIDE_THRESHOLD={cfg.threshold}", f"REPORT_MAX_AGE_DAYS={cfg.max_age_days}", "price_source=FinLab raw price:收盤價; raw price:開盤價; adjusted etl:adj_close", "benchmark=0050", "data_validation=PASS; corporate action coverage heuristic >10% ratio jump plus manually classified events", "research_conclusion=修改後再測", ""])
     frames = {"daily_screen.csv": current, "signal_ledger.csv": ledger, "signal_returns.csv": returns, "research_summary.csv": summary, "last_screen.csv": current, "report_snapshot.csv": reports, "corporate_actions_snapshot.csv": actions}
     name = archive(drive, cfg.folder_id, frames, info, commit)
     put_file(drive, cfg.folder_id, "state.json", json.dumps({"last_successful_market_date": str(market_date.date()), "last_archive": name}).encode(), "application/json", replace=True)

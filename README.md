@@ -20,7 +20,7 @@ Actions 週一至週五 UTC 00:00（台灣 08:00）執行；手動可由 GitHub 
 
 篩選的分母是 FinLab **raw** `price:收盤價`。原始目標價不改動；`effective_target_price` 以報告日後生效的已分類尺度事件乘上 `target_factor`。outcome 另用 FinLab `etl:adj_close`：T 收盤形成訊號，O1 是下一交易日 raw open 乘當日 `adj_close/raw_close`，C5/C10/C20/C60 是訊號後第 5/10/20/60 個交易日 adjusted close；同時計算 0050 的 O1→Ck 與兩者差值。若 O1 尚無交易日，所有 outcome 為 `PENDING`；價格缺失則失敗，不做 forward fill。這是描述性 forward outcome，未扣成本、滑價，亦不保證開盤成交。
 
-每次成功建立 `YYYYMMDD_HHMMSS_<full-git-commit>/`，含 `daily_screen.csv`、`signal_ledger.csv`、`signal_returns.csv`、`research_summary.csv`、`run_info.txt`、`last_screen.csv`、`report_snapshot.csv`、`corporate_actions_snapshot.csv`。舊 archive 不覆蓋。folder 根目錄另有持續狀態 `state.json`、`last_screen.csv`、`signal_ledger.csv`、`signal_returns.csv`，用於隔日 crossing、去重與逐步成熟。需保留根目錄狀態；若手動刪除或修改會破壞連續性。每次請以 archive 和 commit hash 稽核。`research_summary.csv` 低於 30 筆標示 `INSUFFICIENT`，達到也只是 `DESCRIPTIVE_ONLY`。
+每次成功建立 `YYYYMMDD_HHMMSS_<full-git-commit>/`，含 `daily_screen.csv`、`signal_ledger.csv`、`signal_returns.csv`、`research_summary.csv`、`run_info.txt`、`last_screen.csv`、`report_snapshot.csv`、`corporate_actions_snapshot.csv`。舊 archive 不覆蓋。folder 根目錄另有持續狀態 `state.json`、`last_screen.csv`、`signal_ledger.csv`、`signal_returns.csv`，用於隔日 crossing、去重與逐步成熟。每次新市場日執行前，`state.json.last_successful_market_date` 必須與 `last_screen.csv` 唯一的 `market_date` 完全一致；缺檔、空檔、多日期或日期不一致會直接失敗，避免靜默破壞 signal continuity。需保留根目錄狀態；若手動刪除或修改會破壞連續性。每次 `run_info.txt` 另記 previous screen 日期/列數、既有 ledger 列數與本次新增 signal 數，請以 archive 和 commit hash 稽核。`research_summary.csv` 低於 30 筆標示 `INSUFFICIENT`，達到也只是 `DESCRIPTIVE_ONLY`。
 
 本地測試可在既有相容環境執行 `python -m unittest discover -s tests -v`；正式依賴與 Python 3.11 見 `requirements.txt` 和 Actions。請勿將 token、憑證、資料與產生結果納入 Git。
 
