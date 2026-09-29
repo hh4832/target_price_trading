@@ -15,7 +15,7 @@ from .report_loader import parse_reports
 from .report_registry import REGISTRY_COLUMNS, find_new_report_keys, update_report_registry
 from .research_summary import summarize
 from .returns import calculate_returns
-from .screener import SCREEN_COLUMNS, screen
+from .screener import SCREEN_COLUMNS, candidate_view, screen
 from .signal_ledger import LEDGER_COLUMNS, generate_signals
 
 
@@ -101,6 +101,7 @@ def run():
 
     returns = calculate_returns(ledger, raw_close, raw_open, adj_close)
     summary = summarize(returns)
+    candidates = candidate_view(current)
     info = "\n".join([
         f"execution_timestamp={now}", "timezone=Asia/Taipei", f"git_commit={commit}", f"branch={branch}",
         f"run_status={run_status}", f"latest_finlab_market_date={market_date.date()}",
@@ -113,7 +114,7 @@ def run():
         "data_validation=PASS; corporate action coverage heuristic >10% ratio jump plus manually classified events",
         "research_conclusion=修改後再測", ""
     ])
-    frames = {"daily_screen.csv": current, "signal_ledger.csv": ledger, "signal_returns.csv": returns,
+    frames = {"daily_screen.csv": current, "candidate.csv": candidates, "signal_ledger.csv": ledger, "signal_returns.csv": returns,
               "research_summary.csv": summary, "last_screen.csv": current, "report_snapshot.csv": reports,
               "report_registry.csv": registry, "corporate_actions_snapshot.csv": actions}
     name = archive(drive, cfg.folder_id, frames, info, commit)

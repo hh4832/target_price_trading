@@ -13,7 +13,7 @@ from src.report_loader import latest_reports, parse_reports
 from src.report_registry import REGISTRY_COLUMNS, find_new_report_keys, update_report_registry
 from src.research_summary import summarize
 from src.returns import calculate_returns
-from src.screener import screen
+from src.screener import candidate_view, screen
 from src.signal_ledger import LEDGER_COLUMNS, generate_signals
 
 
@@ -102,6 +102,18 @@ class ResearchRules(unittest.TestCase):
         combined = pd.concat([self.reports, second], ignore_index=True)
         self.assertEqual(find_new_report_keys(combined, registry), {("2330", "B", "2026-01-02")})
 
+
+    def test_candidate_view_only_contains_current_candidates_sorted_by_upside(self):
+        current = pd.DataFrame([
+            dict(ticker="A", name="A", broker="B1", report_date="2026-01-01", effective_target_price=140, raw_close=100, target_upside=.40, report_age_days=1, screen_status="CANDIDATE"),
+            dict(ticker="B", name="B", broker="B2", report_date="2026-01-01", effective_target_price=125, raw_close=100, target_upside=.25, report_age_days=1, screen_status="ACTIVE_BELOW_THRESHOLD"),
+            dict(ticker="C", name="C", broker="B3", report_date="2026-01-01", effective_target_price=135, raw_close=100, target_upside=.35, report_age_days=1, screen_status="CANDIDATE"),
+        ])
+        result = candidate_view(current)
+        self.assertEqual(list(result.ticker), ["A", "C"])
+        self.assertEqual(list(result.target_upside), [.40, .35])
+        self.assertEqual(list(result.columns), ["ticker", "name", "broker", "report_date", "effective_target_price", "raw_close", "target_upside", "report_age_days"])
+
     def test_action_scale_and_cash_dividend(self):
         actions = parse_actions([["ticker", "effective_date", "action_type", "target_factor"], ["2330", "2026-01-02", "SPLIT", "0.5"], ["2330", "2026-01-03", "CASH_DIVIDEND", "1"]])
         report = SimpleNamespace(ticker="2330", report_date=pd.Timestamp("2026-01-01"), original_target_price=710)
@@ -167,7 +179,7 @@ class ResearchRules(unittest.TestCase):
             result = run()
         self.assertEqual(result, "20260103_080000_abc123")
         frames = mock_archive.call_args.args[2]
-        self.assertEqual(set(frames), {"daily_screen.csv", "signal_ledger.csv", "signal_returns.csv", "research_summary.csv", "last_screen.csv", "report_snapshot.csv", "report_registry.csv", "corporate_actions_snapshot.csv"})
+        self.assertEqual(set(frames), {"daily_screen.csv", "candidate.csv", "signal_ledger.csv", "signal_returns.csv", "research_summary.csv", "last_screen.csv", "report_snapshot.csv", "report_registry.csv", "corporate_actions_snapshot.csv"})
         self.assertIn("run_status=DATA_NOT_UPDATED", mock_archive.call_args.args[3])
         self.assertIn("state_updated=false", mock_archive.call_args.args[3])
         self.assertIn("new_signals=0", mock_archive.call_args.args[3])

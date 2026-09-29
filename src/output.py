@@ -89,7 +89,7 @@ def archive(drive, folder_id, frames, run_info, commit):
     put_file(drive, archive_id, "run_info.txt", run_info.encode("utf-8"), "text/plain")
     # Every successful execution becomes the current official output. state.json is
     # advanced separately by the pipeline only when the FinLab market date advances.
-    for filename in ("signal_ledger.csv", "signal_returns.csv", "last_screen.csv", "report_registry.csv"):
+    for filename in ("candidate.csv", "signal_ledger.csv", "signal_returns.csv", "last_screen.csv", "report_registry.csv"):
         if filename in frames:
             put_file(drive, folder_id, filename, csv_bytes(frames[filename]), "text/csv", replace=True)
     return name
