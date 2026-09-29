@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import Mock, patch
 from datetime import date
 from types import SimpleNamespace
 
@@ -6,7 +7,7 @@ import pandas as pd
 
 from src.corporate_actions import effective_target, parse_actions
 from src.price_loader import market_dates
-from src.pipeline import validate_previous_state
+from src.pipeline import run, validate_previous_state
 from src.report_loader import latest_reports, parse_reports
 from src.research_summary import summarize
 from src.returns import calculate_returns
@@ -109,6 +110,49 @@ class ResearchRules(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_previous_state({}, previous)
         self.assertIsNone(validate_previous_state({}, pd.DataFrame(columns=["market_date"])))
+
+    @patch("src.pipeline.archive")
+    @patch("src.pipeline.subprocess.check_output")
+    @patch("src.pipeline.read_state")
+    @patch("src.pipeline.load_finlab_prices")
+    @patch("src.pipeline.sheet_values")
+    @patch("src.pipeline.verify_folder")
+    @patch("src.pipeline.clients")
+    def test_data_not_updated_archives_without_publishing_state(
+        self, mock_clients, mock_verify, mock_sheet_values, mock_load_prices,
+        mock_read_state, mock_check_output, mock_archive
+    ):
+        drive, sheets = Mock(), Mock()
+        mock_clients.return_value = (drive, sheets)
+        mock_sheet_values.side_effect = [
+            [["Ticker", "名稱", "報告日期", "前次目標價", "本次目標價", "投顧", "持有", "買進日期", "成本均價"],
+             ["2330", "台積電", "2026-01-01", "120", "130", "B", "Y", "", "75"]],
+            [],
+        ]
+        frame = prices(["2026-01-02"], [100])
+        mock_load_prices.return_value = (frame, frame, frame)
+        mock_read_state.return_value = {"last_successful_market_date": "2026-01-02", "last_archive": "prior"}
+        mock_check_output.side_effect = ["abc123\n", "main\n"]
+        mock_archive.return_value = "20260103_080000_abc123"
+
+        with patch("src.pipeline.put_file") as mock_put_file, \
+             patch("src.pipeline.generate_signals") as mock_generate_signals, \
+             patch("src.pipeline.read_csv") as mock_read_csv:
+            result = run()
+
+        self.assertEqual(result, "20260103_080000_abc123")
+        mock_archive.assert_called_once()
+        args = mock_archive.call_args.args
+        self.assertEqual(args[2], {})
+        self.assertIn("run_status=DATA_NOT_UPDATED", args[3])
+        self.assertIn("state_updated=false", args[3])
+        self.assertIn("new_signals=0", args[3])
+        self.assertIn("git_commit=abc123", args[3])
+        self.assertIn("branch=main", args[3])
+        self.assertIn("execution_timestamp=", args[3])
+        mock_put_file.assert_not_called()
+        mock_generate_signals.assert_not_called()
+        mock_read_csv.assert_not_called()
 
     def test_stale_calendar(self):
         frame = prices(["2026-01-01", "2026-01-02"], [100, 101])
