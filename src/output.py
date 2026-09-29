@@ -78,7 +78,7 @@ def csv_bytes(df):
     return df.to_csv(index=False).encode("utf-8-sig")
 
 
-def archive(drive, folder_id, frames, run_info, commit):
+def archive(drive, folder_id, frames, run_info, commit, *, publish_state=True):
     timestamp = datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y%m%d_%H%M%S")
     name = f"{timestamp}_{commit}"
     if find_child(drive, folder_id, name):
@@ -87,8 +87,9 @@ def archive(drive, folder_id, frames, run_info, commit):
     for filename, df in frames.items():
         put_file(drive, archive_id, filename, csv_bytes(df), "text/csv")
     put_file(drive, archive_id, "run_info.txt", run_info.encode("utf-8"), "text/plain")
-    # Publish state only after archive is complete. Recover from a partial archive by inspecting it.
-    for filename in ("signal_ledger.csv", "signal_returns.csv", "last_screen.csv"):
-        if filename in frames:
-            put_file(drive, folder_id, filename, csv_bytes(frames[filename]), "text/csv", replace=True)
+    # Every execution gets a full archive; persistent research state advances only on a new market date.
+    if publish_state:
+        for filename in ("signal_ledger.csv", "signal_returns.csv", "last_screen.csv"):
+            if filename in frames:
+                put_file(drive, folder_id, filename, csv_bytes(frames[filename]), "text/csv", replace=True)
     return name

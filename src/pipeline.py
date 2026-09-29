@@ -65,52 +65,60 @@ def run():
     try:
         actions = parse_actions(sheet_values(sheets, cfg.sheet_id, "CorporateActions"))
     except Exception as exc:
-        # A missing optional tab is allowed; malformed existing tabs are not.
         if "Unable to parse range" not in str(exc):
             raise
         actions = parse_actions([])
     raw_close, raw_open, adj_close = load_finlab_prices()
-    dates = market_dates(raw_close)
-    market_date = dates[-1]
+    market_date = market_dates(raw_close)[-1]
     state = read_state(drive, cfg.folder_id)
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     branch = subprocess.check_output(["git", "branch", "--show-current"], text=True).strip() or os.environ.get("GITHUB_REF_NAME", "detached")
     now = datetime.now(ZoneInfo("Asia/Taipei")).isoformat()
-    if state.get("last_successful_market_date") and market_date <= pd.Timestamp(state["last_successful_market_date"]):
-        info = "\n".join([
-            f"execution_timestamp={now}",
-            "timezone=Asia/Taipei",
-            f"git_commit={commit}",
-            f"branch={branch}",
-            "run_status=DATA_NOT_UPDATED",
-            f"latest_finlab_market_date={market_date.date()}",
-            f"last_successful_market_date={state['last_successful_market_date']}",
-            "state_updated=false",
-            "new_signals=0",
-            f"TARGET_UPSIDE_THRESHOLD={cfg.threshold}",
-            f"REPORT_MAX_AGE_DAYS={cfg.max_age_days}",
-            "",
-        ])
-        name = archive(drive, cfg.folder_id, {}, info, commit)
-        print(f"DATA_NOT_UPDATED: {name} latest_available_market_date={market_date.date()}; last_successful_market_date={state['last_successful_market_date']}")
-        return name
+
+    last_state_date = state.get("last_successful_market_date")
+    has_new_market_date = not last_state_date or market_date > pd.Timestamp(last_state_date)
+    if last_state_date and market_date < pd.Timestamp(last_state_date):
+        raise ValueError(f"FinLab latest market date {market_date.date()} is older than state last_successful_market_date {last_state_date}")
+
     check_action_coverage(reports, actions, raw_close, adj_close, market_date)
     current = screen(reports, actions, raw_close, market_date, cfg.threshold, cfg.max_age_days)
     previous = read_csv(drive, cfg.folder_id, "last_screen.csv", SCREEN_COLUMNS)
     previous_screen_market_date = validate_previous_state(state, previous)
     ledger = read_csv(drive, cfg.folder_id, "signal_ledger.csv", LEDGER_COLUMNS)
     previous_ledger_rows = len(ledger)
-    ledger = generate_signals(current, previous, ledger, commit, now, cfg.threshold)
-    new_signals = len(ledger) - previous_ledger_rows
+
+    if has_new_market_date:
+        ledger = generate_signals(current, previous, ledger, commit, now, cfg.threshold)
+        new_signals = len(ledger) - previous_ledger_rows
+        run_status = "SUCCESS_NEW_DATA"
+    else:
+        new_signals = 0
+        run_status = "DATA_NOT_UPDATED"
+
     returns = calculate_returns(ledger, raw_close, raw_open, adj_close)
     summary = summarize(returns)
-    info = "\n".join([f"execution_timestamp={now}", "timezone=Asia/Taipei", f"git_commit={commit}", f"branch={branch}", f"latest_finlab_market_date={market_date.date()}", "run_status=SUCCESS_NEW_DATA", f"processed_market_date={market_date.date()}", f"previous_screen_market_date={previous_screen_market_date or ''}", f"previous_screen_rows={len(previous)}", f"previous_ledger_rows={previous_ledger_rows}", f"new_signals={new_signals}", "state_updated=true", f"TARGET_UPSIDE_THRESHOLD={cfg.threshold}", f"REPORT_MAX_AGE_DAYS={cfg.max_age_days}", "price_source=FinLab raw price:收盤價; raw price:開盤價; adjusted etl:adj_close", "benchmark=0050", "data_validation=PASS; corporate action coverage heuristic >10% ratio jump plus manually classified events", "research_conclusion=修改後再測", ""])
-    frames = {"daily_screen.csv": current, "signal_ledger.csv": ledger, "signal_returns.csv": returns, "research_summary.csv": summary, "last_screen.csv": current, "report_snapshot.csv": reports, "corporate_actions_snapshot.csv": actions}
-    name = archive(drive, cfg.folder_id, frames, info, commit)
-    put_file(drive, cfg.folder_id, "state.json", json.dumps({"last_successful_market_date": str(market_date.date()), "last_archive": name}).encode(), "application/json", replace=True)
-    print(f"SUCCESS: {name} market_date={market_date.date()} signals={len(ledger)}")
+    info = "\n".join([
+        f"execution_timestamp={now}", "timezone=Asia/Taipei", f"git_commit={commit}", f"branch={branch}",
+        f"run_status={run_status}", f"latest_finlab_market_date={market_date.date()}",
+        f"last_successful_market_date={last_state_date or ''}", f"processed_market_date={market_date.date()}",
+        f"previous_screen_market_date={previous_screen_market_date or ''}", f"previous_screen_rows={len(previous)}",
+        f"previous_ledger_rows={previous_ledger_rows}", f"new_signals={new_signals}",
+        f"state_updated={'true' if has_new_market_date else 'false'}",
+        f"TARGET_UPSIDE_THRESHOLD={cfg.threshold}", f"REPORT_MAX_AGE_DAYS={cfg.max_age_days}",
+        "price_source=FinLab raw price:收盤價; raw price:開盤價; adjusted etl:adj_close", "benchmark=0050",
+        "data_validation=PASS; corporate action coverage heuristic >10% ratio jump plus manually classified events",
+        "research_conclusion=修改後再測", ""
+    ])
+    frames = {"daily_screen.csv": current, "signal_ledger.csv": ledger, "signal_returns.csv": returns,
+              "research_summary.csv": summary, "last_screen.csv": current, "report_snapshot.csv": reports,
+              "corporate_actions_snapshot.csv": actions}
+    name = archive(drive, cfg.folder_id, frames, info, commit, publish_state=has_new_market_date)
+    if has_new_market_date:
+        put_file(drive, cfg.folder_id, "state.json", json.dumps({"last_successful_market_date": str(market_date.date()), "last_archive": name}).encode(), "application/json", replace=True)
+        print(f"SUCCESS: {name} market_date={market_date.date()} signals={len(ledger)}")
+    else:
+        print(f"DATA_NOT_UPDATED: {name} latest_available_market_date={market_date.date()}; last_successful_market_date={last_state_date}")
     return name
-
 
 if __name__ == "__main__":
     run()
