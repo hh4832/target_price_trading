@@ -15,6 +15,13 @@ def _normalized_keys(frame):
     return result
 
 
+def find_new_report_keys(reports, registry):
+    existing = _normalized_keys(registry.reindex(columns=REGISTRY_COLUMNS))
+    current = _normalized_keys(reports.loc[:, ["ticker", "broker", "report_date"]])
+    existing_keys = set(map(tuple, existing[KEY_COLUMNS].itertuples(index=False, name=None))) if not existing.empty else set()
+    return set(map(tuple, current[KEY_COLUMNS].itertuples(index=False, name=None))) - existing_keys
+
+
 def update_report_registry(reports, registry, first_seen_at):
     """Preserve the first system-observed timestamp for each immutable report key."""
     existing = _normalized_keys(registry.reindex(columns=REGISTRY_COLUMNS))

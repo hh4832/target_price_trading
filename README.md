@@ -16,7 +16,7 @@
 
 Actions 週一至週五 UTC 00:00（台灣 08:00）執行；手動可由 GitHub 的 workflow_dispatch 或 Colab Run All 執行。核心只有 `python -m src.pipeline`。依 FinLab `price:收盤價` 的最新實際交易日期判斷 freshness。每一次 execution 都建立獨立的 `YYYYMMDD_HHMMSS_<full-git-commit>/` 完整 archive；即使 FinLab market date 未增加，也重新計算並保存完整 snapshot，標記 `run_status=DATA_NOT_UPDATED`、`state_updated=false`、`new_signals=0`。同一 market date 重跑不推進 `state.json` 的 market date，但每次成功 execution 都會重新發布 root current outputs，讓 `signal_ledger.csv`、`signal_returns.csv`、`last_screen.csv` 代表最後一次完整成功執行；signal ID 維持冪等，避免無變更重跑產生重複訊號。archive 追蹤 execution，`state.json` 只追蹤最後正式處理的 FinLab market date。初次有新資料的執行只建立當日畫面，不回填假設的歷史 crossing。
 
-每日以 ticker × broker 選截至交易日最新報告，過期報告仍顯示 `EXPIRED`；`daily_screen.csv` 顯示所有 active、expired 與已持有股票。人工持有欄位不會因候選失效而刪除。`report_event` 可辨識新報告日；baseline ledger 僅記 `THRESHOLD_CROSSING`，即已觀察的前一交易日 upside ≤30%，本日 >30%，持續超標不重複，跌回後再次突破可新增。尚無前日觀測不推定 crossing。
+每日以 ticker × broker 選截至交易日最新報告，過期報告仍顯示 `EXPIRED`；`daily_screen.csv` 顯示所有 active、expired 與已持有股票。人工持有欄位不會因候選失效而刪除。`report_event` 可辨識新報告日；ledger 將 >30% candidate 分成兩種事件：`NEW_REPORT_CANDIDATE` 是新 report 第一次被系統觀察時即已 >30%；`THRESHOLD_CROSSING` 是既有 report 前一個可觀察 market state 的 upside ≤30%、本次 >30%。兩者保留於同一 `signal_ledger.csv` 並以 `signal_type` 區分。持續超標不重複；跌回 ≤30% 後再次突破可新增 `THRESHOLD_CROSSING`。首次 report ≤30% 不產生 signal。
 
 篩選的分母是 FinLab **raw** `price:收盤價`。原始目標價不改動；`effective_target_price` 以報告日後生效的已分類尺度事件乘上 `target_factor`。outcome 另用 FinLab `etl:adj_close`：T 收盤形成訊號，O1 是下一交易日 raw open 乘當日 `adj_close/raw_close`，C5/C10/C20/C60 是訊號後第 5/10/20/60 個交易日 adjusted close；同時計算 0050 的 O1→Ck 與兩者差值。若 O1 尚無交易日，所有 outcome 為 `PENDING`；價格缺失則失敗，不做 forward fill。這是描述性 forward outcome，未扣成本、滑價，亦不保證開盤成交。
 
@@ -28,4 +28,4 @@ Actions 週一至週五 UTC 00:00（台灣 08:00）執行；手動可由 GitHub 
 
 這是人手挑選的報告，並非完整券商報告 universe，存在 selection bias、survivorship bias、可取得日期與報告實際公開時間不一致的 look-ahead 風險。必須補報告的發布時間與可取得時點，才能評估報告當日 crossing 的可交易性。高 upside 可能來自目標價大幅上修、股價大跌、報告過時，或市場已有新資訊。保留 `previous_target_price` 與 `target_upside` 為不同變數，不以其中一項代替另一項。
 
-後續研究應檢查資料探勘、交易成本、滑價、開盤流動性、漲跌停無法成交、樣本數、年份與股票集中度，以及各券商、年份、市場狀態、報告年齡和 upside 區間的穩健性。不得挑最好看的持有期宣稱有效。當前未有真實正式回測結果，不能判定這個假設有效。
+後續研究應分開檢查 `NEW_REPORT_CANDIDATE` 與 `THRESHOLD_CROSSING`，因兩者可能分別反映新券商資訊與價格變動造成的估值落差，不可只用合併績效推論兩種機制都有效。另應檢查資料探勘、交易成本、滑價、開盤流動性、漲跌停無法成交、樣本數、年份與股票集中度，以及各券商、年份、市場狀態、報告年齡和 upside 區間的穩健性。不得挑最好看的持有期宣稱有效。當前未有真實正式回測結果，不能判定這個假設有效。

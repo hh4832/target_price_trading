@@ -12,7 +12,7 @@ from .corporate_actions import parse_actions
 from .output import archive, clients, put_file, read_csv, read_state, sheet_values, verify_folder
 from .price_loader import load_finlab_prices, market_dates, price_at
 from .report_loader import parse_reports
-from .report_registry import REGISTRY_COLUMNS, update_report_registry
+from .report_registry import REGISTRY_COLUMNS, find_new_report_keys, update_report_registry
 from .research_summary import summarize
 from .returns import calculate_returns
 from .screener import SCREEN_COLUMNS, screen
@@ -88,13 +88,14 @@ def run():
     ledger = read_csv(drive, cfg.folder_id, "signal_ledger.csv", LEDGER_COLUMNS)
     previous_ledger_rows = len(ledger)
     registry_before = read_csv(drive, cfg.folder_id, "report_registry.csv", REGISTRY_COLUMNS)
+    new_report_keys = find_new_report_keys(reports, registry_before)
     registry = update_report_registry(reports, registry_before, now)
-    new_reports = len(registry) - len(registry_before)
+    new_reports = len(new_report_keys)
 
     # Every successful execution is the current official result. Signal IDs make
     # same-market-date reruns idempotent while allowing newly keyed reports to be
     # incorporated without advancing the FinLab market-date state.
-    ledger = generate_signals(current, previous, ledger, commit, now, cfg.threshold)
+    ledger = generate_signals(current, previous, ledger, commit, now, cfg.threshold, new_report_keys=new_report_keys)
     new_signals = len(ledger) - previous_ledger_rows
     run_status = "SUCCESS_NEW_DATA" if has_new_market_date else "DATA_NOT_UPDATED"
 

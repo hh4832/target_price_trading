@@ -10,7 +10,7 @@ from src.corporate_actions import effective_target, parse_actions
 from src.price_loader import market_dates
 from src.pipeline import run, validate_previous_state
 from src.report_loader import latest_reports, parse_reports
-from src.report_registry import REGISTRY_COLUMNS, update_report_registry
+from src.report_registry import REGISTRY_COLUMNS, find_new_report_keys, update_report_registry
 from src.research_summary import summarize
 from src.returns import calculate_returns
 from src.screener import screen
@@ -68,6 +68,39 @@ class ResearchRules(unittest.TestCase):
         self.assertEqual(len(generate_signals(previous, screen(self.reports, self.actions, close, dates[-2]), ledger, "abc", "now")), 2)
         self.assertGreater(screen(self.reports, self.actions, close, dates[1]).iloc[0].target_upside, .3)
         self.assertEqual(adjusted.at[dates[1], "2330"], 990)
+
+
+    def test_new_report_candidate_is_distinct_and_idempotent(self):
+        day = pd.Timestamp("2026-01-01")
+        close = prices([day], [99])  # 130 / 99 - 1 > 30%
+        current = screen(self.reports, self.actions, close, day)
+        key = ("2330", "B", "2026-01-01")
+        ledger = generate_signals(current, pd.DataFrame(), pd.DataFrame(columns=LEDGER_COLUMNS), "abc", "now", new_report_keys={key})
+        self.assertEqual(len(ledger), 1)
+        self.assertEqual(ledger.iloc[0].signal_type, "NEW_REPORT_CANDIDATE")
+        rerun = generate_signals(current, current, ledger, "def", "later", new_report_keys=set())
+        self.assertEqual(len(rerun), 1)
+        self.assertEqual(rerun.iloc[0].signal_id, ledger.iloc[0].signal_id)
+
+    def test_new_report_below_threshold_has_no_signal_then_crosses(self):
+        dates = pd.to_datetime(["2026-01-01", "2026-01-02"])
+        close = prices(dates, [110, 99])
+        first = screen(self.reports, self.actions, close, dates[0])
+        key = ("2330", "B", "2026-01-01")
+        ledger = generate_signals(first, pd.DataFrame(), pd.DataFrame(columns=LEDGER_COLUMNS), "abc", "now", new_report_keys={key})
+        self.assertEqual(len(ledger), 0)
+        second = screen(self.reports, self.actions, close, dates[1])
+        ledger = generate_signals(second, first, ledger, "abc", "later", new_report_keys=set())
+        self.assertEqual(len(ledger), 1)
+        self.assertEqual(ledger.iloc[0].signal_type, "THRESHOLD_CROSSING")
+
+    def test_registry_new_report_keys_only_returns_unseen_reports(self):
+        registry = update_report_registry(self.reports, pd.DataFrame(columns=REGISTRY_COLUMNS), "2026-01-01T08:00:00+08:00")
+        self.assertEqual(find_new_report_keys(self.reports, registry), set())
+        second = self.reports.copy()
+        second.loc[:, "report_date"] = pd.Timestamp("2026-01-02")
+        combined = pd.concat([self.reports, second], ignore_index=True)
+        self.assertEqual(find_new_report_keys(combined, registry), {("2330", "B", "2026-01-02")})
 
     def test_action_scale_and_cash_dividend(self):
         actions = parse_actions([["ticker", "effective_date", "action_type", "target_factor"], ["2330", "2026-01-02", "SPLIT", "0.5"], ["2330", "2026-01-03", "CASH_DIVIDEND", "1"]])
@@ -130,7 +163,7 @@ class ResearchRules(unittest.TestCase):
         mock_check_output.side_effect = ["abc123\n", "main\n"]
         mock_archive.return_value = "20260103_080000_abc123"
         previous = screen(reports(), parse_actions([]), frame, "2026-01-02")
-        with patch("src.pipeline.put_file") as mock_put_file, patch("src.pipeline.read_csv", side_effect=[previous, pd.DataFrame(columns=LEDGER_COLUMNS), pd.DataFrame(columns=REGISTRY_COLUMNS)]), patch("src.pipeline.generate_signals", side_effect=lambda current, previous, ledger, *args: ledger) as mock_generate:
+        with patch("src.pipeline.put_file") as mock_put_file, patch("src.pipeline.read_csv", side_effect=[previous, pd.DataFrame(columns=LEDGER_COLUMNS), pd.DataFrame(columns=REGISTRY_COLUMNS)]), patch("src.pipeline.generate_signals", side_effect=lambda current, previous, ledger, *args, **kwargs: ledger) as mock_generate:
             result = run()
         self.assertEqual(result, "20260103_080000_abc123")
         frames = mock_archive.call_args.args[2]
