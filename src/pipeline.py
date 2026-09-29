@@ -74,8 +74,23 @@ def run():
     market_date = dates[-1]
     state = read_state(drive, cfg.folder_id)
     if state.get("last_successful_market_date") and market_date <= pd.Timestamp(state["last_successful_market_date"]):
-        print(f"DATA_NOT_UPDATED: latest_available_market_date={market_date.date()}; last_successful_market_date={state['last_successful_market_date']}")
-        return "DATA_NOT_UPDATED"
+        info = "\n".join([
+            f"execution_timestamp={now}",
+            "timezone=Asia/Taipei",
+            f"git_commit={commit}",
+            f"branch={branch}",
+            "run_status=DATA_NOT_UPDATED",
+            f"latest_finlab_market_date={market_date.date()}",
+            f"last_successful_market_date={state['last_successful_market_date']}",
+            "state_updated=false",
+            "new_signals=0",
+            f"TARGET_UPSIDE_THRESHOLD={cfg.threshold}",
+            f"REPORT_MAX_AGE_DAYS={cfg.max_age_days}",
+            "",
+        ])
+        name = archive(drive, cfg.folder_id, {}, info, commit)
+        print(f"DATA_NOT_UPDATED: {name} latest_available_market_date={market_date.date()}; last_successful_market_date={state['last_successful_market_date']}")
+        return name
     check_action_coverage(reports, actions, raw_close, adj_close, market_date)
     current = screen(reports, actions, raw_close, market_date, cfg.threshold, cfg.max_age_days)
     previous = read_csv(drive, cfg.folder_id, "last_screen.csv", SCREEN_COLUMNS)
@@ -89,7 +104,7 @@ def run():
     new_signals = len(ledger) - previous_ledger_rows
     returns = calculate_returns(ledger, raw_close, raw_open, adj_close)
     summary = summarize(returns)
-    info = "\n".join([f"execution_timestamp={now}", "timezone=Asia/Taipei", f"git_commit={commit}", f"branch={branch}", f"latest_finlab_market_date={market_date.date()}", f"processed_market_date={market_date.date()}", f"previous_screen_market_date={previous_screen_market_date or ''}", f"previous_screen_rows={len(previous)}", f"previous_ledger_rows={previous_ledger_rows}", f"new_signals={new_signals}", f"TARGET_UPSIDE_THRESHOLD={cfg.threshold}", f"REPORT_MAX_AGE_DAYS={cfg.max_age_days}", "price_source=FinLab raw price:收盤價; raw price:開盤價; adjusted etl:adj_close", "benchmark=0050", "data_validation=PASS; corporate action coverage heuristic >10% ratio jump plus manually classified events", "research_conclusion=修改後再測", ""])
+    info = "\n".join([f"execution_timestamp={now}", "timezone=Asia/Taipei", f"git_commit={commit}", f"branch={branch}", f"latest_finlab_market_date={market_date.date()}", "run_status=SUCCESS_NEW_DATA", f"processed_market_date={market_date.date()}", f"previous_screen_market_date={previous_screen_market_date or ''}", f"previous_screen_rows={len(previous)}", f"previous_ledger_rows={previous_ledger_rows}", f"new_signals={new_signals}", f"TARGET_UPSIDE_THRESHOLD={cfg.threshold}", f"REPORT_MAX_AGE_DAYS={cfg.max_age_days}", "price_source=FinLab raw price:收盤價; raw price:開盤價; adjusted etl:adj_close", "benchmark=0050", "data_validation=PASS; corporate action coverage heuristic >10% ratio jump plus manually classified events", "research_conclusion=修改後再測", ""])
     frames = {"daily_screen.csv": current, "signal_ledger.csv": ledger, "signal_returns.csv": returns, "research_summary.csv": summary, "last_screen.csv": current, "report_snapshot.csv": reports, "corporate_actions_snapshot.csv": actions}
     name = archive(drive, cfg.folder_id, frames, info, commit)
     put_file(drive, cfg.folder_id, "state.json", json.dumps({"last_successful_market_date": str(market_date.date()), "last_archive": name}).encode(), "application/json", replace=True)
