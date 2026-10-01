@@ -152,6 +152,20 @@ class ResearchRules(unittest.TestCase):
         self.assertIn("latest_index=2026-01-01", message)
         self.assertIn("index_type=DatetimeIndex", message)
 
+
+    def test_return_diagnostic_exposes_ticker_type_mismatch(self):
+        dates = pd.to_datetime(["2026-01-01", "2026-01-02"])
+        frame = prices(dates, [100, 100])
+        ledger = pd.DataFrame([dict(signal_id="x", signal_date="2026-01-01", ticker=2330)])
+        with patch("builtins.print") as mock_print:
+            with self.assertRaises(ValueError):
+                calculate_returns(ledger, frame, frame, frame)
+        output = "\n".join(call.args[0] for call in mock_print.call_args_list)
+        self.assertIn("ticker_repr=2330", output)
+        self.assertIn("ticker_type=int", output)
+        self.assertIn("string_ticker_present_raw_open=True", output)
+        self.assertIn("exact_ticker_present_raw_open=False", output)
+
     def test_returns_entry_maturity_and_missing_data(self):
         dates = pd.date_range("2026-01-01", periods=62)
         raw_close = prices(dates, [100] * len(dates))
