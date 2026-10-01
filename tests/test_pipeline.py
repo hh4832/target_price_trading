@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pandas as pd
 
 from src.corporate_actions import effective_target, parse_actions
-from src.price_loader import market_dates, price_at
+from src.price_loader import _print_universe_diagnostics, market_dates, price_at
 from src.pipeline import run, validate_previous_state
 from src.report_loader import latest_reports, parse_reports
 from src.report_registry import REGISTRY_COLUMNS, find_new_report_keys, update_report_registry
@@ -122,6 +122,25 @@ class ResearchRules(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_actions([["ticker", "effective_date", "action_type", "target_factor"], ["2330", "2026-01-02", "CASH_DIVIDEND", "0.5"]])
 
+
+
+    def test_universe_diagnostic_reports_shape_presence_and_diff(self):
+        raw_close = prices(["2026-01-01"], [100])
+        raw_open = raw_close.drop(columns=["2330"])
+        adj_close = raw_close.copy()
+        with patch("builtins.print") as mock_print:
+            _print_universe_diagnostics((
+                ("raw_close", raw_close),
+                ("raw_open", raw_open),
+                ("adj_close", adj_close),
+            ), probe_tickers=("2330", "0050"))
+        output = "\n".join(call.args[0] for call in mock_print.call_args_list)
+        self.assertIn("dataset=raw_close shape=(1, 2)", output)
+        self.assertIn("2330_present=True", output)
+        self.assertIn("dataset=raw_open shape=(1, 1)", output)
+        self.assertIn("2330_present=False", output)
+        self.assertIn("left_only_count=1", output)
+        self.assertIn("left_only_sample=['2330']", output)
 
     def test_missing_price_error_contains_diagnostics(self):
         frame = prices(["2026-01-01"], [100])

@@ -8,10 +8,40 @@ def load_finlab_prices():
     raw_close = data.get("price:收盤價")
     raw_open = data.get("price:開盤價")
     adj_close = data.get("etl:adj_close")
-    for label, frame in (("raw_close", raw_close), ("raw_open", raw_open), ("adj_close", adj_close)):
+    frames = (("raw_close", raw_close), ("raw_open", raw_open), ("adj_close", adj_close))
+    for label, frame in frames:
         if frame is None or frame.empty or frame.index.has_duplicates:
             raise ValueError(f"Invalid FinLab {label} data")
+    _print_universe_diagnostics(frames)
     return raw_close, raw_open, adj_close
+
+
+def _print_universe_diagnostics(frames, probe_tickers=("3653", "3665", "0050")):
+    frame_map = dict(frames)
+    universes = {label: set(map(str, frame.columns)) for label, frame in frames}
+    for label, frame in frames:
+        normalized_index = pd.DatetimeIndex(pd.to_datetime(frame.index)).normalize()
+        probes = " ".join(
+            f"{ticker}_present={ticker in universes[label]}"
+            for ticker in probe_tickers
+        )
+        print(
+            f"FINLAB_FRAME_DIAGNOSTIC dataset={label} shape={frame.shape} "
+            f"latest_index={normalized_index.max().date()} columns_dtype={frame.columns.dtype} "
+            f"{probes}"
+        )
+    labels = tuple(frame_map)
+    for left in labels:
+        for right in labels:
+            if left >= right:
+                continue
+            left_only = sorted(universes[left] - universes[right])
+            right_only = sorted(universes[right] - universes[left])
+            print(
+                f"FINLAB_UNIVERSE_DIFF left={left} right={right} "
+                f"left_only_count={len(left_only)} left_only_sample={left_only[:10]} "
+                f"right_only_count={len(right_only)} right_only_sample={right_only[:10]}"
+            )
 
 
 def market_dates(raw_close):
