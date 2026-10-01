@@ -1,5 +1,6 @@
 import unittest
 import json
+import io
 from unittest.mock import Mock, patch
 from datetime import date
 from types import SimpleNamespace
@@ -8,6 +9,7 @@ import pandas as pd
 
 from src.corporate_actions import effective_target, parse_actions
 from src.price_loader import _print_universe_diagnostics, market_dates, price_at
+from src.output import read_csv
 from src.pipeline import run, validate_previous_state
 from src.report_loader import latest_reports, parse_reports
 from src.report_registry import REGISTRY_COLUMNS, find_new_report_keys, update_report_registry
@@ -152,6 +154,28 @@ class ResearchRules(unittest.TestCase):
         self.assertIn("latest_index=2026-01-01", message)
         self.assertIn("index_type=DatetimeIndex", message)
 
+
+
+    def test_read_csv_preserves_ticker_as_string_and_leading_zero(self):
+        payload = b"ticker,signal_id\n3653,a\n0050,b\n"
+        drive = Mock()
+        drive.files.return_value.get_media.return_value.execute.return_value = payload
+        with patch("src.output.find_child", return_value={"id": "file-id"}):
+            result = read_csv(drive, "folder", "signal_ledger.csv", ("ticker", "signal_id"))
+        self.assertEqual(result["ticker"].tolist(), ["3653", "0050"])
+        self.assertTrue(all(isinstance(value, str) for value in result["ticker"].tolist()))
+
+    def test_csv_round_trip_ticker_can_lookup_finlab_prices(self):
+        payload = b"signal_id,signal_date,ticker\nx,2026-01-01,2330\n"
+        drive = Mock()
+        drive.files.return_value.get_media.return_value.execute.return_value = payload
+        with patch("src.output.find_child", return_value={"id": "file-id"}):
+            ledger = read_csv(drive, "folder", "signal_ledger.csv", ("signal_id", "signal_date", "ticker"))
+        dates = pd.date_range("2026-01-01", periods=6)
+        frame = prices(dates, [100] * len(dates))
+        result = calculate_returns(ledger, frame, frame, frame).iloc[0]
+        self.assertEqual(ledger.iloc[0].ticker, "2330")
+        self.assertEqual(result.entry_date, "2026-01-02")
 
     def test_return_diagnostic_exposes_ticker_type_mismatch(self):
         dates = pd.to_datetime(["2026-01-01", "2026-01-02"])

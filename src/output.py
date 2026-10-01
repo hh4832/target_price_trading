@@ -56,7 +56,13 @@ def read_csv(drive, folder_id, name, columns):
     if not item:
         return pd.DataFrame(columns=columns)
     data = drive.files().get_media(fileId=item["id"]).execute()
-    return pd.read_csv(io.BytesIO(data)).reindex(columns=columns)
+    dtype = {"ticker": "string"} if "ticker" in columns else None
+    frame = pd.read_csv(io.BytesIO(data), dtype=dtype).reindex(columns=columns)
+    if "ticker" in frame.columns:
+        if frame["ticker"].isna().any() or (frame["ticker"].str.strip() == "").any():
+            raise ValueError(f"{name} contains missing ticker")
+        frame["ticker"] = frame["ticker"].str.strip()
+    return frame
 
 
 def read_state(drive, folder_id):
