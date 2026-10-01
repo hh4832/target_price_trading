@@ -21,11 +21,36 @@ def market_dates(raw_close):
     return pd.DatetimeIndex(pd.to_datetime(raw_close.index[valid])).normalize().sort_values()
 
 
+def _frame_diagnostic(frame, date, ticker):
+    date = pd.Timestamp(date).normalize()
+    normalized_index = pd.DatetimeIndex(pd.to_datetime(frame.index)).normalize()
+    ticker_present = ticker in frame.columns
+    date_present = bool((normalized_index == date).any())
+    latest_index = normalized_index.max().date().isoformat() if len(normalized_index) else "EMPTY"
+    value = "UNAVAILABLE"
+    if ticker_present and date_present:
+        matches = normalized_index == date
+        actual_index = frame.index[matches][0]
+        cell = frame.at[actual_index, ticker]
+        value = "NaN" if pd.isna(cell) else repr(float(cell))
+    return (
+        f"ticker_present={ticker_present}; date_present={date_present}; "
+        f"latest_index={latest_index}; index_type={type(frame.index).__name__}; "
+        f"columns_dtype={frame.columns.dtype}; exact_value={value}"
+    )
+
+
 def price_at(frame, date, ticker):
     date = pd.Timestamp(date)
     if ticker not in frame.columns or date not in frame.index:
-        raise ValueError(f"Missing price {ticker} on {date.date()}")
+        raise ValueError(
+            f"Missing price {ticker} on {date.date()}; "
+            f"{_frame_diagnostic(frame, date, ticker)}"
+        )
     value = frame.at[date, ticker]
     if pd.isna(value) or float(value) <= 0:
-        raise ValueError(f"Invalid price {ticker} on {date.date()}")
+        raise ValueError(
+            f"Invalid price {ticker} on {date.date()}; "
+            f"{_frame_diagnostic(frame, date, ticker)}"
+        )
     return float(value)

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pandas as pd
 
 from src.corporate_actions import effective_target, parse_actions
-from src.price_loader import market_dates
+from src.price_loader import market_dates, price_at
 from src.pipeline import run, validate_previous_state
 from src.report_loader import latest_reports, parse_reports
 from src.report_registry import REGISTRY_COLUMNS, find_new_report_keys, update_report_registry
@@ -121,6 +121,17 @@ class ResearchRules(unittest.TestCase):
         self.assertEqual(effective_target(report, "2026-01-03", actions), 355)
         with self.assertRaises(ValueError):
             parse_actions([["ticker", "effective_date", "action_type", "target_factor"], ["2330", "2026-01-02", "CASH_DIVIDEND", "0.5"]])
+
+
+    def test_missing_price_error_contains_diagnostics(self):
+        frame = prices(["2026-01-01"], [100])
+        with self.assertRaises(ValueError) as ctx:
+            price_at(frame, "2026-01-02", "2330")
+        message = str(ctx.exception)
+        self.assertIn("ticker_present=True", message)
+        self.assertIn("date_present=False", message)
+        self.assertIn("latest_index=2026-01-01", message)
+        self.assertIn("index_type=DatetimeIndex", message)
 
     def test_returns_entry_maturity_and_missing_data(self):
         dates = pd.date_range("2026-01-01", periods=62)

@@ -8,6 +8,15 @@ RETURN_COLUMNS = ("signal_id", "signal_date", "ticker", "entry_date", "entry_adj
 
 def calculate_returns(ledger, raw_close, raw_open, adj_close, benchmark="0050"):
     dates = pd.DatetimeIndex(pd.to_datetime(raw_close.index)).normalize().sort_values()
+    dataset_latest = {
+        "raw_close": pd.DatetimeIndex(pd.to_datetime(raw_close.index)).normalize().max().date(),
+        "raw_open": pd.DatetimeIndex(pd.to_datetime(raw_open.index)).normalize().max().date(),
+        "adj_close": pd.DatetimeIndex(pd.to_datetime(adj_close.index)).normalize().max().date(),
+    }
+    print(
+        "PRICE_DATASET_DIAGNOSTIC "
+        + " ".join(f"{name}_latest={date}" for name, date in dataset_latest.items())
+    )
     rows = []
     for signal in ledger.itertuples(index=False):
         t = pd.Timestamp(signal.signal_date)
@@ -24,9 +33,21 @@ def calculate_returns(ledger, raw_close, raw_open, adj_close, benchmark="0050"):
         result["entry_date"] = entry_date.date().isoformat()
         entries = {}
         for ticker in (signal.ticker, benchmark):
-            open_ = price_at(raw_open, entry_date, ticker)
-            close_ = price_at(raw_close, entry_date, ticker)
-            adjustment = price_at(adj_close, entry_date, ticker) / close_
+            try:
+                open_ = price_at(raw_open, entry_date, ticker)
+                close_ = price_at(raw_close, entry_date, ticker)
+                adjustment = price_at(adj_close, entry_date, ticker) / close_
+            except ValueError as exc:
+                print(
+                    "PRICE_ENTRY_DIAGNOSTIC "
+                    f"signal_id={signal.signal_id} signal_date={signal.signal_date} "
+                    f"entry_date={entry_date.date()} ticker={ticker} "
+                    f"raw_close_latest={dataset_latest['raw_close']} "
+                    f"raw_open_latest={dataset_latest['raw_open']} "
+                    f"adj_close_latest={dataset_latest['adj_close']} "
+                    f"error={exc}"
+                )
+                raise
             entries[ticker] = open_ * adjustment
         result["entry_adj_open"] = entries[signal.ticker]
         result["benchmark_entry_adj_open"] = entries[benchmark]
