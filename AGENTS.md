@@ -16,6 +16,34 @@ secret hard-coding; explicit typed boundaries; backward-compatible
 schema handling; idempotent state; no silent coercion; one core change
 at a time; test before commit/push.
 
+## Observability and diagnostics
+
+Every production or long-running pipeline must be observable from GitHub Actions/Colab logs without attaching a debugger.
+
+Every major stage must emit bounded `START` / `DONE` / `FAIL` progress, elapsed time, and relevant non-secret counts/dates. Long loops should emit bounded `x/y` updates rather than one line per row.
+
+Diagnostics are part of implementation design. For each new or changed stage consider:
+
+`Stage → Input contract → Invariant → Observable → Failure diagnostic`
+
+External boundaries (Google Sheet/Drive, FinLab, persistent CSV/state, archives) should expose enough metadata to verify schema/shape, date coverage, missing required values, duplicate keys, identifier dtype, state continuity, and row counts as applicable.
+
+For this repository, diagnostics should make it possible to distinguish at least:
+
+- Google API/folder access
+- report and CorporateActions ingestion
+- FinLab dataset loading and latest market date
+- persistent state / previous screen continuity
+- signal-ledger and report-registry row counts
+- new reports vs new signals
+- outcome calculation
+- archive creation
+- state publication
+
+A green process exit is not sufficient evidence of a valid research run. Preserve the distinction between execution status, market-data freshness, state advancement, signal generation, and archive completion.
+
+Never log OAuth tokens, FinLab credentials, raw credential JSON, or unnecessary user-entered report contents. Observability must not change the >30%/90-day research rules, signal identity, price semantics, or state semantics.
+
 ## Research invariants
 
 Do not alter merely to repair engineering failures:

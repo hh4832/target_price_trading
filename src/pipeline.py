@@ -10,6 +10,7 @@ import pandas as pd
 from .config import Config
 from .corporate_actions import parse_actions
 from .output import archive, clients, put_file, read_csv, read_state, sheet_values, verify_folder
+from .observability import PipelineProgress
 from .price_loader import load_finlab_prices, market_dates, price_at
 from .report_loader import parse_reports
 from .report_registry import REGISTRY_COLUMNS, find_new_report_keys, update_report_registry
@@ -60,18 +61,26 @@ def validate_previous_state(state, previous):
 
 def run():
     cfg = Config()
-    drive, sheets = clients()
-    verify_folder(drive, cfg.folder_id)
-    reports = parse_reports(sheet_values(sheets, cfg.sheet_id, "基本面選股"))
-    try:
-        actions = parse_actions(sheet_values(sheets, cfg.sheet_id, "CorporateActions"))
-    except Exception as exc:
-        if "Unable to parse range" not in str(exc):
-            raise
-        actions = parse_actions([])
-    raw_close, raw_open, adj_close = load_finlab_prices()
+    progress = PipelineProgress(total=20, label="TARGET_PRICE")
+    drive, sheets = progress.run("Connect Google APIs", clients)
+    progress.run("Verify research Drive folder", verify_folder, drive, cfg.folder_id)
+    reports = progress.run(
+        "Load and parse report sheet",
+        lambda: parse_reports(sheet_values(sheets, cfg.sheet_id, "基本面選股")),
+    )
+    def load_actions():
+        try:
+            return parse_actions(sheet_values(sheets, cfg.sheet_id, "CorporateActions"))
+        except Exception as exc:
+            if "Unable to parse range" not in str(exc):
+                raise
+            progress.diagnostic("corporate_actions", status="MISSING_OPTIONAL_SHEET")
+            return parse_actions([])
+
+    actions = progress.run("Load corporate-action input", load_actions)
+    raw_close, raw_open, adj_close = progress.run("Load FinLab price datasets", load_finlab_prices)
     market_date = market_dates(raw_close)[-1]
-    state = read_state(drive, cfg.folder_id)
+    state = progress.run("Load persistent market state", read_state, drive, cfg.folder_id)
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     branch = subprocess.check_output(["git", "branch", "--show-current"], text=True).strip() or os.environ.get("GITHUB_REF_NAME", "detached")
     now = datetime.now(ZoneInfo("Asia/Taipei")).isoformat()
@@ -81,27 +90,56 @@ def run():
     if last_state_date and market_date < pd.Timestamp(last_state_date):
         raise ValueError(f"FinLab latest market date {market_date.date()} is older than state last_successful_market_date {last_state_date}")
 
-    check_action_coverage(reports, actions, raw_close, adj_close, market_date)
-    current = screen(reports, actions, raw_close, market_date, cfg.threshold, cfg.max_age_days)
-    previous = read_csv(drive, cfg.folder_id, "last_screen.csv", SCREEN_COLUMNS)
-    previous_screen_market_date = validate_previous_state(state, previous)
-    ledger = read_csv(drive, cfg.folder_id, "signal_ledger.csv", LEDGER_COLUMNS)
+    progress.diagnostic(
+        "input_data",
+        reports=len(reports),
+        corporate_actions=len(actions),
+        raw_close_rows=len(raw_close),
+        raw_close_columns=len(raw_close.columns),
+        latest_market_date=market_date.date(),
+        state_market_date=state.get("last_successful_market_date") or "NONE",
+    )
+    progress.run("Validate corporate-action coverage", check_action_coverage, reports, actions, raw_close, adj_close, market_date)
+    current = progress.run("Screen current target-price universe", screen, reports, actions, raw_close, market_date, cfg.threshold, cfg.max_age_days)
+    previous = progress.run("Load previous screen state", read_csv, drive, cfg.folder_id, "last_screen.csv", SCREEN_COLUMNS)
+    previous_screen_market_date = progress.run("Validate previous state continuity", validate_previous_state, state, previous)
+    ledger = progress.run("Load persistent signal ledger", read_csv, drive, cfg.folder_id, "signal_ledger.csv", LEDGER_COLUMNS)
     previous_ledger_rows = len(ledger)
-    registry_before = read_csv(drive, cfg.folder_id, "report_registry.csv", REGISTRY_COLUMNS)
-    new_report_keys = find_new_report_keys(reports, registry_before)
-    registry = update_report_registry(reports, registry_before, now)
+    registry_before = progress.run("Load report registry", read_csv, drive, cfg.folder_id, "report_registry.csv", REGISTRY_COLUMNS)
+    new_report_keys = progress.run("Identify newly observed reports", find_new_report_keys, reports, registry_before)
+    registry = progress.run("Update report registry in memory", update_report_registry, reports, registry_before, now)
     new_reports = len(new_report_keys)
 
     # Every successful execution is the current official result. Signal IDs make
     # same-market-date reruns idempotent while allowing newly keyed reports to be
     # incorporated without advancing the FinLab market-date state.
-    ledger = generate_signals(current, previous, ledger, commit, now, cfg.threshold, new_report_keys=new_report_keys)
+    ledger = progress.run(
+        "Generate idempotent signal events",
+        generate_signals,
+        current,
+        previous,
+        ledger,
+        commit,
+        now,
+        cfg.threshold,
+        new_report_keys=new_report_keys,
+    )
     new_signals = len(ledger) - previous_ledger_rows
     run_status = "SUCCESS_NEW_DATA" if has_new_market_date else "DATA_NOT_UPDATED"
 
-    returns = calculate_returns(ledger, raw_close, raw_open, adj_close)
-    summary = summarize(returns)
-    candidates = candidate_view(current)
+    progress.diagnostic(
+        "signal_state",
+        current_rows=len(current),
+        previous_rows=len(previous),
+        previous_ledger_rows=previous_ledger_rows,
+        merged_ledger_rows=len(ledger),
+        new_reports=new_reports,
+        new_signals=new_signals,
+        run_status=run_status,
+    )
+    returns = progress.run("Calculate forward outcomes", calculate_returns, ledger, raw_close, raw_open, adj_close)
+    summary = progress.run("Build research summary", summarize, returns)
+    candidates = progress.run("Build candidate presentation view", candidate_view, current)
     info = "\n".join([
         f"execution_timestamp={now}", "timezone=Asia/Taipei", f"git_commit={commit}", f"branch={branch}",
         f"run_status={run_status}", f"latest_finlab_market_date={market_date.date()}",
@@ -117,9 +155,25 @@ def run():
     frames = {"daily_screen.csv": current, "candidate.csv": candidates, "signal_ledger.csv": ledger, "signal_returns.csv": returns,
               "research_summary.csv": summary, "last_screen.csv": current, "report_snapshot.csv": reports,
               "report_registry.csv": registry, "corporate_actions_snapshot.csv": actions}
-    name = archive(drive, cfg.folder_id, frames, info, commit)
+    name = progress.run("Archive execution outputs", archive, drive, cfg.folder_id, frames, info, commit)
     state_market_date = str(market_date.date()) if has_new_market_date else last_state_date
-    put_file(drive, cfg.folder_id, "state.json", json.dumps({"last_successful_market_date": state_market_date, "last_archive": name}).encode(), "application/json", replace=True)
+    progress.run(
+        "Publish persistent state",
+        put_file,
+        drive,
+        cfg.folder_id,
+        "state.json",
+        json.dumps({"last_successful_market_date": state_market_date, "last_archive": name}).encode(),
+        "application/json",
+        replace=True,
+    )
+    progress.finish(
+        run_status,
+        market_date=market_date.date(),
+        archive=name,
+        candidates=len(candidates),
+        ledger_rows=len(ledger),
+    )
     if has_new_market_date:
         print(f"SUCCESS: {name} market_date={market_date.date()} signals={len(ledger)}")
     else:
