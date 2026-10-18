@@ -1,5 +1,7 @@
 name: Target price daily research
 on:
+  repository_dispatch:
+    types: [target-price-daily]
   schedule:
     - cron: '0 20 * * 0-4' # 04:00 Asia/Taipei (next calendar day), UTC+8
   workflow_dispatch:
