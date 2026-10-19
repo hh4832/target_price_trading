@@ -59,6 +59,16 @@ def validate_previous_state(state, previous):
     return previous_date
 
 
+def should_skip_redundant_automatic_run(event_name, has_new_market_date, new_report_keys, state):
+    """Skip identical-date automatic retries, but preserve manual reruns and new reports."""
+    return (
+        event_name in {"schedule", "repository_dispatch"}
+        and not has_new_market_date
+        and not new_report_keys
+        and bool(state.get("last_archive"))
+    )
+
+
 def run():
     cfg = Config()
     progress = PipelineProgress(total=20, label="TARGET_PRICE")
@@ -109,6 +119,25 @@ def run():
     new_report_keys = progress.run("Identify newly observed reports", find_new_report_keys, reports, registry_before)
     registry = progress.run("Update report registry in memory", update_report_registry, reports, registry_before, now)
     new_reports = len(new_report_keys)
+
+    if should_skip_redundant_automatic_run(
+        os.environ.get("GITHUB_EVENT_NAME", ""),
+        has_new_market_date,
+        new_report_keys,
+        state,
+    ):
+        progress.diagnostic(
+            "automatic_duplicate_guard",
+            status="SKIPPED_ALREADY_CURRENT",
+            market_date=market_date.date(),
+            last_archive=state["last_archive"],
+            new_reports=0,
+        )
+        print(
+            f"AUTO_SKIPPED_ALREADY_CURRENT: market_date={market_date.date()}; "
+            "no newly keyed reports; existing archive and state preserved."
+        )
+        return None
 
     # Every successful execution is the current official result. Signal IDs make
     # same-market-date reruns idempotent while allowing newly keyed reports to be
